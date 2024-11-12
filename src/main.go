@@ -69,9 +69,15 @@ func main() {
 		log.Fatal("failed to parse config JSON", zap.Error(err))
 	}
 
-	srv, err := net.FileListener(os.NewFile(3, "http socket"))
-	if err != nil {
-		log.Fatal("socket activation failed", zap.Error(err))
+	var srv net.Listener
+	if srvFile := os.NewFile(3, "http socket"); srvFile == nil {
+		log.Fatal("socket activation failed: missing socket")
+	} else {
+		srv, err = net.FileListener(srvFile)
+		srvFile.Close()
+		if err != nil {
+			log.Fatal("socket activation failed", zap.Error(err))
+		}
 	}
 
 	ctx := context.Background()
@@ -170,7 +176,9 @@ func main() {
 		if err != nil {
 			log.Error("failed to open systemd notify socket", zap.Error(err))
 		} else {
-			if _, err := sock.Write([]byte("READY=1")); err != nil {
+			_, err := sock.Write([]byte("READY=1"))
+			sock.Close()
+			if err != nil {
 				log.Error("failed to notify systemd", zap.Error(err))
 			}
 		}

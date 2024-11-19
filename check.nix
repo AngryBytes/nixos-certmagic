@@ -41,9 +41,12 @@ in
 
     # A web server which will be the node requesting certs
     webserver = { nodes, config, ... }: {
-      imports = [ ./module/withoutOverlay.nix commonConfig ];
+      imports = [ commonConfig ./module ];
       networking.nameservers = lib.mkForce [ (dnsServerIP nodes) ];
       networking.firewall.allowedTCPPorts = [ 80 443 ];
+
+      # Tests can't modify nixpkgs config.
+      disabledModules = [ ./module/overlay.nix ];
 
       # OpenSSL will be used for more thorough certificate validation
       environment.systemPackages = [ pkgs.openssl ];

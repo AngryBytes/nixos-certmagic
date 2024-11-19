@@ -20,12 +20,7 @@
     in
     {
       overlays.default = import ./overlay.nix;
-
-      nixosModules = {
-        default = ./module/default.nix;
-        withoutOverlay = ./module/withoutOverlay.nix;
-        withOverlay = ./module/withOverlay.nix;
-      };
+      nixosModules.default = ./module;
 
       packages = eachPkgs (pkgs: {
         default = pkgs.nixos-certmagic;

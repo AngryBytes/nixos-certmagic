@@ -138,14 +138,18 @@ in
 
       # Ensure cert comes before chain in fullchain.pem
       def check_fullchain(node, cert_name):
-          subject_data = node.succeed(
-              f"openssl crl2pkcs7 -nocrl -certfile /var/lib/acme/{cert_name}/fullchain.pem"
-              " | openssl pkcs7 -print_certs -noout"
+          cert_file = f"/var/lib/acme/{cert_name}/fullchain.pem"
+          num_certs = node.succeed(f"grep -o 'END CERTIFICATE' {cert_file}")
+          assert len(num_certs.strip().split("\n")) > 0, "Insufficient certs in fullchain.pem"
+
+          first_cert_data = node.succeed(
+              f"grep -m1 -B50 'END CERTIFICATE' {cert_file}"
+              " | openssl x509 -noout -text"
           )
-          for line in subject_data.lower().split("\n"):
-              if "subject" in line:
-                  print(f"First subject in fullchain.pem: {line}")
-                  assert cert_name.lower() in line
+          for line in first_cert_data.lower().split("\n"):
+              if "dns:" in line:
+                  print(f"First DNSName in fullchain.pem: {line}")
+                  assert cert_name.lower() in line, f"{cert_name} not found in {line}"
                   return
 
           assert False
@@ -193,7 +197,7 @@ in
       webserver.wait_for_file("/run/mysqld/mysqld.sock")
 
       with subtest("Can generate valid selfsigned certs"):
-          # Without nginx, challenges fail, so we only have selfsigned certs
+          # Without nginx, acme-manager pauses for waitForListeners
           webserver.systemctl("start acme-manager.service")
           webserver.wait_for_unit("acme-manager.service")
           check_fullchain(webserver, "a.example.test")

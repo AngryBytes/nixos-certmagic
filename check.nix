@@ -216,16 +216,18 @@ in
           # (This specific file is unused by nginx, so it can still start.)
           webserver.succeed("rm /var/lib/acme/a.example.test/cert.pem")
           webserver.systemctl("start nginx.service")
-          webserver.wait_for_unit("nginx.service")
           webserver.wait_for_file("/var/lib/acme/a.example.test/cert.pem")
           check_fullchain(webserver, "a.example.test")
           check_issuer(webserver, "a.example.test", "pebble")
           check_connection(client, "a.example.test")
 
       with subtest("Correctly reloads certificates from MySQL"):
-          webserver.succeed("rm /var/lib/acme/a.example.test/fullchain.pem")
-          webserver.systemctl("restart acme-manager.service")
-          webserver.wait_for_file("/var/lib/acme/a.example.test/fullchain.pem")
+          webserver.systemctl("stop nginx.service acme-manager.service")
+          webserver.succeed("rm /var/lib/acme/a.example.test/*.pem")
+          webserver.systemctl("start acme-manager.service")
+          webserver.succeed("rm /var/lib/acme/a.example.test/cert.pem")
+          webserver.systemctl("start nginx.service")
+          webserver.wait_for_file("/var/lib/acme/a.example.test/cert.pem")
           check_fullchain(webserver, "a.example.test")
     '';
 }

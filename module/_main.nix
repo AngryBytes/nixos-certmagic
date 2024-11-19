@@ -143,6 +143,15 @@ in
         '';
       };
 
+      waitForListeners = lib.mkOption {
+        type = with lib.types; listOf str;
+        default = [ ":80" ];
+        description = ''
+          Delay requesting certificates until a connection can be established
+          to to given addresses. This allows checking webserver availability.
+        '';
+      };
+
       defaults = lib.mkOption {
         type = lib.types.submodule [ (inheritableModule true) defaultsOpts ];
         description = ''

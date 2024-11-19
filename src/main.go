@@ -28,6 +28,7 @@ import (
 type Cfg struct {
 	PreliminarySelfsigned bool
 	AcceptTerms           bool
+	WaitForListeners      []string
 	Defaults              *DefaultsCfg
 	Certs                 map[string]*CertCfg
 }
@@ -69,6 +70,7 @@ func main() {
 		log.Fatal("failed to parse config JSON", zap.Error(err))
 	}
 
+	// Socket activation for the HTTP challenge server.
 	var srv net.Listener
 	if srvFile := os.NewFile(3, "http socket"); srvFile == nil {
 		log.Fatal("socket activation failed: missing socket")
@@ -102,14 +104,6 @@ func main() {
 		certmagic.DefaultACME.TestCA = ""
 	}
 
-	var magic *certmagic.Config
-	cache := certmagic.NewCache(certmagic.CacheOptions{
-		GetConfigForCert: func(c certmagic.Certificate) (*certmagic.Config, error) {
-			return magic, nil
-		},
-		Logger: log,
-	})
-
 	var storage certmagic.Storage
 	if dsnFile := os.Getenv("CERTMAGIC_MYSQL_DSN_FILE"); dsnFile != "" {
 		dsn, err := os.ReadFile(dsnFile)
@@ -125,7 +119,64 @@ func main() {
 		storage = &certmagic.FileStorage{Path: ".certmagic"}
 	}
 
+	// Create self-signed certs if requested.
+	if cfg.PreliminarySelfsigned {
+		for _, cert := range cfg.Certs {
+			generateSelfSignedIfNecessary(cert)
+		}
+	}
+
+	// Real webserver may now start.
+	if sockPath := os.Getenv("NOTIFY_SOCKET"); sockPath != "" {
+		addr := &net.UnixAddr{Net: "unixgram", Name: sockPath}
+		sock, err := net.DialUnix(addr.Net, nil, addr)
+		if err != nil {
+			log.Error("failed to open systemd notify socket", zap.Error(err))
+		} else {
+			_, err := sock.Write([]byte("READY=1"))
+			sock.Close()
+			if err != nil {
+				log.Error("failed to notify systemd", zap.Error(err))
+			}
+		}
+	}
+
+	// Wait for the webserver to start.
+	for _, addr := range cfg.WaitForListeners {
+		var notify uint8
+		var lastErr string
+		for {
+			conn, err := net.Dial("tcp", addr)
+			if err == nil {
+				conn.Close()
+				break
+			}
+
+			errMsg := err.Error()
+			if errMsg != lastErr {
+				lastErr = errMsg
+				notify = 3
+			}
+			if notify > 0 {
+				notify -= 1
+				if notify == 0 {
+					log.Info("waiting for listener", zap.String("address", addr), zap.Error(err))
+				}
+			}
+
+			time.Sleep(2 * time.Second)
+		}
+	}
+
+	// Start certmagic.
+	var magic *certmagic.Config
 	certObtained := make(chan bool)
+	cache := certmagic.NewCache(certmagic.CacheOptions{
+		GetConfigForCert: func(c certmagic.Certificate) (*certmagic.Config, error) {
+			return magic, nil
+		},
+		Logger: log,
+	})
 	magic = certmagic.New(cache, certmagic.Config{
 		OnEvent: func(ctx context.Context, event string, data map[string]any) error {
 			if event == "cert_obtained" {
@@ -145,15 +196,9 @@ func main() {
 		log.Fatal("failed to initialize certmagic", zap.Error(err))
 	}
 
-	// Perform initial update of certs on disk, and amend with self-signed certs.
+	// Perform initial update of certs on disk.
 	var lastUpdate time.Time
 	lastUpdate = updateCerts(&cfg, cache, lastUpdate)
-
-	if cfg.PreliminarySelfsigned {
-		for _, cert := range cfg.Certs {
-			generateSelfSignedIfNecessary(cert)
-		}
-	}
 
 	// Start our HTTP challenge server.
 	acme, ok := magic.Issuers[0].(*certmagic.ACMEIssuer)
@@ -168,21 +213,6 @@ func main() {
 		})
 		log.Fatal("http server error", zap.Error(http.Serve(srv, handler)))
 	}()
-
-	// Real webserver may now start.
-	if sockPath := os.Getenv("NOTIFY_SOCKET"); sockPath != "" {
-		addr := &net.UnixAddr{Net: "unixgram", Name: sockPath}
-		sock, err := net.DialUnix(addr.Net, nil, addr)
-		if err != nil {
-			log.Error("failed to open systemd notify socket", zap.Error(err))
-		} else {
-			_, err := sock.Write([]byte("READY=1"))
-			sock.Close()
-			if err != nil {
-				log.Error("failed to notify systemd", zap.Error(err))
-			}
-		}
-	}
 
 	// We don't really have a way to hook into certmagic's (local) updates.
 	// The events it provides don't necessarily inform us about renews on other

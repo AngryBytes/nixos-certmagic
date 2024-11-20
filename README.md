@@ -1,5 +1,7 @@
 # nixos-certmagic
 
+**Status: EXPERIMENTAL**
+
 A NixOS module that replaces ACME certificate management with an implementation
 based on [certmagic].
 
